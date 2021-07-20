@@ -1,0 +1,384 @@
+---
+title: "Capstone_RMD"
+output: pdf_document
+Student: "Daniel Maroko"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Section 1: Introduction
+
+I analyzed the Heart Attack Analysis & Prediction Dataset found on Kaggle at https://www.kaggle.com/rashikrahmanpritom/heart-attack-analysis-prediction-dataset
+I have transferred this file to a repository on GitHub and saved it as a CSV file.
+
+The goal of this project is to perform machine learning tasks (train and validate a model on the data). There should be two algorithms used, and one must be
+more complex than regression.
+
+The Heart Attack dataset looks at thirteen variables, including Age, Sex, Cholesterol, and has a binary output variable for whether a heart attack occured.
+The predictor variables are initially all numeric, but are ultimately either numeric or factors (ie: cholestorol is numeric while sex is a factor). Note that throughout the project or script, I will be using the terms "heart attack" and "heart disease" interchangably.
+
+I performed the following steps:
+1. Look at high level summary stats on the dataset
+2. Clean the dataset as necessary to train a machine learning algorithm
+3. Split the data into training and test sets
+4. Train and test a multi-variate logistic regression model
+5. Train and test a KNN algorithm
+6. Train and test a random forest model
+7. State my results and conclusion
+
+
+I begin by installing and loading required packages and the dataset:
+
+
+```{r import}
+if(!require(readr)) install.packages("tidyverse", repos = "http://cran.us.r-project.org")
+if(!require(caret)) install.packages("caret", repos = "http://cran.us.r-project.org")
+if(!require(dplyr)) install.packages("dplyr", repos = "http://cran.us.r-project.org")
+if(!require(corrplot)) install.packages("corrplot", repos = "http://cran.us.r-project.org")
+if(!require(gridExtra)) install.packages("gridExtra", repos = "http://cran.us.r-project.org")
+if(!require(tidyverse)) install.packages("tidyverse", repos = "http://cran.us.r-project.org")
+if(!require(rpart)) install.packages("rpart", repos = "http://cran.us.r-project.org")
+if(!require(rpart.plot)) install.packages("rpart.plot", repos = "http://cran.us.r-project.org")
+if(!require(randomForest)) install.packages("randomForest", repos = "http://cran.us.r-project.org")
+
+library (readr)
+library(caret)
+library(dplyr)
+library(corrplot)
+library(gridExtra)
+library(tidyverse)
+library(rpart)
+library(rpart.plot)
+library(randomForest)
+
+
+urlfile<-"https://raw.githubusercontent.com/danman13/Capstone/main/heart.csv"
+heart<-read_csv(url(urlfile))
+class(heart)
+
+heart <- as.data.frame(heart)
+class(heart)
+```
+
+The dataset is stored in Github and is a tibble initially. I converted it into a dataframe
+
+## Section 2: Methods and Analysis
+
+The next step is to explore the data and note any significant observations. In this section, I will analyze the data, note any trends, and visualize different variables.
+Since I am predicting output, I want to note correlation between any variables, which can result in colinearity and make it difficult to isolate the effect of a single varibale. I also want to note any blank data cells, since that will impact training of different algorithms. Finally, I want to note any relevant trends or observations.
+
+At a high level, I will be training three different types of algorithms: regression, KNN, and random forests.
+
+Start with a high level data exploration
+
+```{r summary_data}
+dim(heart) 
+head(heart)
+str(heart) 
+table(heart$output)
+prop.table(table(heart$output))
+```
+
+This initial summary data shows that there are 303 rows and 14 columns. This is a fairly small dataset, which means right off the bat there is a good chance that whatever model I create may be overly sensitive or have limited applications. Analyzing the first few rows, there are 13 predictors we can use to predict the 14th variable - output. All of the data is in numeric format, even though some variables, such as sex or chest pain, appear to be factors. Finally, we see roughly 55% of people in the dataset have had a heart attack.
+
+Let's reclass these factors from numeric to factor
+```{r reclass}
+heart$sex <- factor(heart$sex)
+levels(heart$sex) <- c("Female", "Male")
+
+heart$cp <- factor(heart$cp)
+heart$fbs <- factor(heart$fbs)
+heart$restecg <- factor(heart$restecg)
+heart$exng <- factor(heart$exng)
+heart$slp <- factor(heart$slp)
+heart$caa <- factor(heart$caa)
+heart$thall <- factor(heart$thall)
+heart$output <- factor(heart$output)
+```
+
+Next, let's look for missing values that could impact our prediction:
+
+```{r missing_value}
+str(heart)
+anyNA(heart)
+```
+
+No missing values present. Great! Let's move on. Next, I want to visualize different variables. First one up is sex. We'll plot a bar chart to show the distribution of sex in the dataset, since sex should be a good predictor of heart disease intuitively.
+
+```{r sex_plot}
+heart %>%
+  ggplot(aes(x = factor(sex))) +
+  geom_bar(fill = "red") + 
+  xlab("Sex")
+```
+
+Males are more prevalent in the dataset by roughly 2x
+Next, I look at age, since this should also be highly correlated with heart disease
+
+```{r agePlot}
+heart %>%
+  ggplot(aes(x = age)) +
+  geom_histogram(binwidth = 5, fill = "red") + 
+  xlab("Age")
+```
+
+The distribution is skewed slightly younger, but the median age appears to be around 55 as shown in the boxplot
+
+```{r age_BP}
+heart %>%
+  ggplot(aes(x = age)) +
+  geom_boxplot() + 
+  xlab("Age")
+```
+
+Finally, let's see chest pain's distribution:
+
+```{r cpPlot}
+heart %>%
+  ggplot(aes(x = factor(cp))) +
+  geom_bar(fill = "red") + 
+  xlab("Chest Pain")
+```
+
+Chest pain is a factor with 4 levels - 0 is typical angia, 1 is atypical angia, 2 is non-anginal, and 3 is asymptomatic.
+Based off of this, almost 50% show typical angia pain and about 25%-30% show non-anginal. Asymptomatic is the rarest in the dataset
+
+Next, I want to look at correlation between the numeric data. Highly correlated variables (either positive or negative) could have a big swing on our resulting equation and open us up to increased sensitivity when one variable changes, esentially overfitting. I'll split the dataset into a new dataset that contains only the numeric variables
+
+```{r numeric}
+numeric_vector <- c(1,4,5,8,10)
+heart_numeric <- heart[,numeric_vector]
+head(heart_numeric)
+corelation <- cor(heart_numeric)
+head(corelation)
+corrplot(corelation, method="shade")
+```
+
+We see some stonger correlation (thalachh vs age or thalachh vs old peak), but these variables aren't too correlated meaning they should be good to go for our model
+
+R gives an error when trying to see correlations between non-numeric data, so to work around this, I'll create another dataset using the original since it initally came as numeric.
+
+```{r corrAll}
+heart2<-read_csv(url(urlfile))
+heart2 <- as.data.frame(heart2)
+cor_heart2 <- cor(heart2)
+corrplot(cor_heart2,method = "shade")
+```
+
+observe that outcome has stronger correlation with certain variables like chest pain, restecg, or old peak, but again there is no strong correlation between two predictors.
+
+Next, I want to see conditional impact on different variables. For instance, what is the distribution of sex when heart disease is present vs the distribution when it isn't.
+
+Let's look first at sex when heart disease is and isn't present
+```{r conditionalSex}
+sex1 <- heart %>% filter(output == 1) %>%
+  ggplot(aes(x = factor(sex))) +
+  geom_bar(fill = "Red")+
+  xlab("Sex")+
+  ggtitle("Sex when output is 1")
+
+sex2 <- heart %>% filter(output == 0) %>%
+  ggplot(aes(x = factor(sex))) +
+  geom_bar(fill = "Red")+
+  xlab("Sex")+
+  ggtitle("Sex when output is 0")
+grid.arrange(sex1, sex2)
+```
+
+There's a pretty even split when heart disease is present, but it is skewed male when none is present. As a percentage of each sex, female has a higher share of disease in the dataset.
+
+Let's look at age next:
+```{r conditionalAge}
+age1 <- heart %>% filter(output == 1) %>%
+  ggplot(aes(x = age)) +
+  geom_histogram(binwidth = 5,fill = "Red")+
+  xlab("Age")+
+  ggtitle("Age when output is 1")
+
+age2 <- heart %>% filter(output == 0) %>%
+  ggplot(aes(x = age)) +
+  geom_histogram(binwidth = 5,fill = "Red")+
+  xlab("Age")+
+  ggtitle("Age when output is 0")
+grid.arrange(age1, age2)
+```
+
+Age skews slightly older when no heart disease is present, which is interesting since the general population tends to skew older when heart disease IS present
+
+Max blood pressure is next:
+```{r conditionalBP}
+bps1 <- heart %>% filter(output == 1) %>%
+  ggplot(aes(x = trtbps)) +
+  geom_histogram(binwidth = 5,fill = "Red")+
+  xlab("BPS")+
+  ggtitle("BPS when output is 1")
+
+bps2 <- heart %>% filter(output == 0) %>%
+  ggplot(aes(x = trtbps)) +
+  geom_histogram(binwidth = 5,fill = "Red")+
+  xlab("BPS")+
+  ggtitle("BPS when output is 0")
+grid.arrange(bps1, bps2)
+```
+
+This is not normally distributed for either "yes" or "no" but BPS is slightly higher when heart disease is present.
+
+Let's look at cholesterol next:
+```{r conditionalChol}
+chol1 <- heart %>% filter(output == 1) %>%
+  ggplot(aes(x = chol)) +
+  geom_histogram(binwidth = 5,fill = "Red")+
+  xlab("Cholesterol")+
+  ggtitle("Cholesterol when output is 1")
+
+chol2 <- heart %>% filter(output == 0) %>%
+  ggplot(aes(x = chol)) +
+  geom_histogram(binwidth = 5,fill = "Red")+
+  xlab("Cholesterol")+
+  ggtitle("Cholesterol when output is 0")
+grid.arrange(chol1, chol2)
+```
+
+Intersting. Cholesterol is lower when heart disease is present. Could any potential medication play into this? Also, the dataset doesn't say whether this is HDL, LDL, or total cholesterol.
+
+Two more variables to look at. First, max heart rate:
+```{r conditionalHR}
+maxhr1 <- heart %>% filter(output == 1) %>%
+  ggplot(aes(x = thalachh)) +
+  geom_histogram(binwidth = 5,fill = "Red")+
+  xlab("Max HR")+
+  ggtitle("Max HR when output is 1")
+
+maxhr2 <- heart %>% filter(output == 0) %>%
+  ggplot(aes(x = thalachh)) +
+  geom_histogram(binwidth = 5,fill = "Red")+
+  xlab("Max HR")+
+  ggtitle("Max HR when output is 0")
+grid.arrange(maxhr1, maxhr2)
+```
+
+Heart rate is higher when heart disease is present, which is consistent with intuition since the heart would need to work much harder.
+
+Finally, the chest pain distribution:
+```{r conditionalChestPain}
+cp1 <- heart %>% filter(output == 1) %>%
+  ggplot(aes(x = factor(cp))) +
+  geom_bar(fill = "Red")+
+  xlab("Chest Pain")+
+  ggtitle("Chest Pain when output is 1")
+
+cp2 <- heart %>% filter(output == 0) %>%
+  ggplot(aes(x = factor(cp))) +
+  geom_bar(fill = "Red")+
+  xlab("Chest Pain")+
+  ggtitle("Chest Pain when output is 0")
+grid.arrange(cp1, cp2)
+```
+
+Although typical angia is the most prevalent in the dataset, non-anginal is the most common when someone has heart disease. Maybe if this could be caught early on, heart diease could be prevented (assuming this is a cause rather than effect).
+
+Now that the deep exploration is done, we're going to move on to splitting the data into training and test sets. I chose a 75/25 split for the data since the dataset is so small. I didn't want the validation set to be so small that it didn't have the capability of validating the data.
+
+```{r split}
+n.point <- nrow(heart)
+sampling_rate <- 0.75
+set.seed(123)
+train <- sample(1:n.point, sampling_rate * n.point, replace = FALSE)
+test <- setdiff(1:n.point, train)
+heart_train <- subset(heart[train,])
+heart_test <- subset(heart[test,])
+heart_train <- as.data.frame(heart_train)
+heart_test <- as.data.frame(heart_test)
+head(heart_train)
+head(heart_test)
+nrow(heart_train)
+nrow(heart_test)
+str(heart_train)
+str(heart_test)
+```
+
+This splits the data set into a training set of 227 observations and a test set of 76 observations
+
+The first model I'll try is a logistic regression model. I'm going to try multiple iterations - the first with 3 variables, then with 4, then 5, and finally all variables. I'll pick the best model and discuss further before moving to KNN.
+```{r threevarreg}
+set.seed(123)
+fit_glm <- glm(output ~ sex + age + chol, data = heart_train, family = "binomial")
+p_hat_logistic <- predict(fit_glm, heart_test)
+y_hat_logistic <- factor(ifelse(p_hat_logistic > 0.5, 1, 0))
+fit_glm_result <- confusionMatrix(data = y_hat_logistic, reference = heart_test$output)$overall[1]
+fit_glm_result
+results <- data.frame()
+results <- data_frame(method="Logistic Regression - variables", accuracy = fit_glm_result)
+results %>% knitr::kable()
+```
+
+The first mdoel used age, sex, and cholesterol as predictors, showing an accuracy of 51% - definitely not great and I think we can do better. Let's add a fourth variable, chest pain:
+```{r fourvarreg}
+set.seed(123)
+fit_glm2 <- glm(output ~ sex + age + chol + cp, data = heart_train, family = "binomial")
+p_hat_logistic2 <- predict(fit_glm2, heart_test)
+y_hat_logistic2 <- factor(ifelse(p_hat_logistic2 > 0.5, 1, 0))
+fit_glm_result2 <- confusionMatrix(data = y_hat_logistic2, reference = heart_test$output)$overall[1]
+fit_glm_result2
+results <- bind_rows(results, data_frame(method="Logistic Regression - 4 variables", accuracy = fit_glm_result2))
+results %>% knitr::kable()
+```
+By adding chest pain, our model accuracy improves to 77.3%, a significant step up! Can we do better though? Let's add max heart rate and see:
+```{r fivevarreg}
+set.seed(123)
+fit_glm3 <- glm(output ~ sex + age + chol + cp + thalachh, data = heart_train, family = "binomial")
+p_hat_logistic3<- predict(fit_glm3, heart_test)
+y_hat_logistic3 <- factor(ifelse(p_hat_logistic3 > 0.5, 1, 0))
+fit_glm_result3 <- confusionMatrix(data = y_hat_logistic3, reference = heart_test$output)$overall[1]
+fit_glm_result3
+results <- bind_rows(results, data_frame(method="Logistic Regression - 5 variables", accuracy = fit_glm_result3))
+results %>% knitr::kable()
+```
+This acutually took us back in accuracy
+
+Let's dive deeper into the four variable regression that performed the best
+
+```{r regCM}
+confusionMatrix(data = y_hat_logistic2, heart_test$output)
+```
+
+Looking at the data, there is high sensitivity, which means that we are good at predicting true positives, but low specificity. This model doesn't predict true negatives well. In a healthcare setting, that is worrisome since we'd rather be safe than sorry. Let's look to KNN to see if we can improve on this regression and bring balance.
+
+```{r knn}
+set.seed(1, sample.kind = "Rounding")
+knn_fit <- knn3(output ~ ., data = heart_train, k = 5)
+y_hat_knn <- predict(knn_fit, heart_test, type = "class")
+knn_results <- confusionMatrix(data = y_hat_knn, reference = heart_test$output)$overall[1]
+results <- bind_rows(results, data_frame(method="Knn - k = 3", accuracy = knn_results))
+confusionMatrix(data = y_hat_knn, heart_test$output) 
+results %>% knitr::kable()
+```
+
+Knn produced 71% accuracy, lower than our regression with higher specificity while sacrificing sensitivity. This model really isn't much better at the end of the day. Let's try a random forest model.
+
+```{r rf}
+set.seed(1, sample.kind = "Rounding")
+rf_fit <- randomForest(output ~ .,  data=heart_train)
+y_hat_rf <- predict(rf_fit, heart_test)
+rf_results <- confusionMatrix(data = y_hat_rf, reference = heart_test$output)$overall[1]
+rf_results
+confusionMatrix(data = y_hat_rf, heart_test$output)
+results <- bind_rows(results, data_frame(method="Random Forest", accuracy = rf_results))
+```
+
+This produces an accuracy of ~82%, by far the best model tried. We took a small hit in sensitivity, but were able to boost specificity, although it isn't as high as we'd like.
+
+## Results
+```{r results}
+results %>% knitr::kable()
+```
+
+Our random forest model was the top performer with an accuracy of over 80%. It had a high sensitivity, but specificity could use improvement. I think specificity is the biggest drawback of all these models. The accuracy confidence interval ranged from .71 to almost .9, so there is a chance this model overperforms.
+
+
+## Conclusion
+Looking at the heart attack data, we were able to train a machine learning model with around 80% accruacy. The overall accuracy and sensitivity (true positive rate) were great, but the specificity wasn't what we needed it to be for the model to be useful. In a medical setting, we would rather see a false positive than a false negative, but this model doesn't predict false negatives well. The dataset size is also a limiting factor. Because we are dealing with limited observations, the overall model might be more sensitive to swings in one variable or outliers than if we had more datapoints. Combined, these really limit our model's usefulness.
+
+The model definitely could be improved. For instance, on all models, we can tweak which predictors we use. We can also use an ensemble method to further normalize noise in our dataset between algorithms.
